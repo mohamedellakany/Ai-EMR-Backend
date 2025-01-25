@@ -9,11 +9,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
-from django.utils.decorators import method_decorator
-from .models import User
-
-# Temporary storage for OTPs (replace with a database model in production)
-otp_storage = {}
+from .models import User, OTP
 
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(View):
@@ -61,7 +57,7 @@ class LoginView(View):
 @method_decorator(csrf_exempt, name='dispatch')
 class LogoutView(View):
     def post(self, request, *args, **kwargs):
-        logout(request)  # Log the user out
+        logout(request)
         return JsonResponse({
             'status': 'success',
             'message': 'Logout successful.'
@@ -115,12 +111,12 @@ class RegisterView(View):
 
             # Create the user
             user = User.objects.create_user(username=username, email=email, password=password)
-            user.is_verified = False  # User is not verified yet
+            user.is_verified = False
             user.save()
 
             # Generate and send verification email
             token = user.generate_verification_token()
-            verification_link = f"http://localhost:3000/verify-email/{token}/"  # Frontend verification page
+            verification_link = f"http://localhost:3000/verify-email/{token}/"
             send_mail(
                 'Verify Your Email',
                 f'Please click the link to verify your email: {verification_link}',
@@ -167,7 +163,9 @@ class ForgotPasswordView(View):
 
             # Generate OTP
             otp = str(random.randint(100000, 999999))
-            otp_storage[email] = otp  # Store OTP temporarily
+
+            # Store OTP in the database
+            OTP.objects.create(user=user, otp=otp)
 
             # Send OTP via email
             send_mail(
@@ -199,7 +197,7 @@ class VerifyOTPView(View):
     def post(self, request, *args, **kwargs):
         try:
             data = json.loads(request.body)
-            otp_entered = data.get('otp')  # Only OTP is required now
+            otp_entered = data.get('otp')
 
             if not otp_entered:
                 return JsonResponse({
@@ -207,19 +205,16 @@ class VerifyOTPView(View):
                     'message': 'OTP is required.'
                 }, status=400)
 
-            # Retrieve the email from the OTP storage
-            email = None
-            for key, value in otp_storage.items():
-                if value == otp_entered:
-                    email = key
-                    break
+            # Retrieve the OTP from the database
+            otp_record = OTP.objects.filter(otp=otp_entered).first()
 
-            if email:
-                del otp_storage[email]  # Clear OTP after verification
+            if otp_record:
+                email = otp_record.user.email
+                otp_record.delete()
                 return JsonResponse({
                     'status': 'success',
                     'message': 'OTP verified successfully.',
-                    'email': email  # Return the email for the frontend to use
+                    'email': email 
                 })
             else:
                 return JsonResponse({
@@ -292,7 +287,7 @@ class UpdateProfileView(View):
             data = json.loads(request.body)
             username = data.get('username')
             email = data.get('email')
-            old_password = data.get('old_password')  # Get old password
+            old_password = data.get('old_password') 
             new_password = data.get('new_password')
             confirm_password = data.get('confirm_password')
 
@@ -354,8 +349,8 @@ class VerifyEmailView(View):
                     'message': 'Email is already verified.'
                 }, status=400)
 
-            user.is_verified = True  # Mark the user as verified
-            user.verification_token = None  # Clear the token
+            user.is_verified = True
+            user.verification_token = None
             user.save()
 
             return JsonResponse({
@@ -367,3 +362,4 @@ class VerifyEmailView(View):
                 'status': 'error',
                 'message': 'Invalid verification token.'
             }, status=400)
+        
